@@ -5,10 +5,19 @@ import json
 from utils import encrypt_data, decrypt_data
 import zipfile
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class TimerStartRequest(BaseModel):
     duration: int
+
+class Task(BaseModel):
+    title: str
+    description: str
+
+class ProgressUpdate(BaseModel):
+    study_time: int = Field(..., ge=0, description="Study time in minutes")
+    tasks_completed: int = Field(..., ge=0, description="Number of tasks completed")
+
 
 app = FastAPI()
 
@@ -53,9 +62,9 @@ def get_tasks():
     return json.loads(tasks)
 
 @app.post("/tasks")
-def add_task(task: dict):
+def add_task(task: Task):
     tasks = json.loads(decrypt_data(TASKS_FILE.read_text()))
-    tasks.append(task)
+    tasks.append(task.dict())
     TASKS_FILE.write_text(encrypt_data(json.dumps(tasks, indent=4)))
     return {"message": "Task added successfully"}
 
@@ -74,9 +83,9 @@ def get_progress():
     return json.loads(progress)
 
 @app.post("/progress")
-def update_progress(update: dict):
+def update_progress(update: ProgressUpdate):
     progress = json.loads(decrypt_data(PROGRESS_FILE.read_text()))
-    for key, value in update.items():
+    for key, value in update.model_dump().items():
         progress[key] = progress.get(key, 0) + value
     PROGRESS_FILE.write_text(encrypt_data(json.dumps(progress, indent=4)))
     return {"message": "Progress updated successfully"}
@@ -134,15 +143,22 @@ def pause_timer():
 @app.post("/timer/complete")
 def complete_timer():
     timer_data = json.loads(decrypt_data(TIMER_FILE.read_text()))
-    if timer_data["status"] not in ["active", "paused"]:
+    if timer_data["status"] != "active":
         raise HTTPException(status_code=400, detail="No active timer to complete")
 
-    timer_data["logs"].append({"start_time": timer_data["start_time"], "duration": timer_data["duration"]})
+    end_time = datetime.now().isoformat()
+    log_entry = {
+        "start_time": timer_data["start_time"],
+        "end_time": end_time,
+        "duration": timer_data["duration"],
+    }
+    timer_data["logs"].append(log_entry)
     timer_data["status"] = "idle"
     timer_data["start_time"] = None
     timer_data["duration"] = 0
     TIMER_FILE.write_text(encrypt_data(json.dumps(timer_data, indent=4)))
     return {"message": "Timer completed"}
+
 
 @app.get("/timer/status")
 def get_timer_status():
